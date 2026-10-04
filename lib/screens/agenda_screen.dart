@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
+import '../services/chat_service.dart';
+import '../widgets/message_receipt.dart';
 import 'chat_screen.dart';
 
 class AgendaScreen extends StatefulWidget {
@@ -11,12 +16,101 @@ class AgendaScreen extends StatefulWidget {
   State<AgendaScreen> createState() => _AgendaScreenState();
 }
 
-class _AgendaScreenState extends State<AgendaScreen> {
+class _AgendaScreenState extends State<AgendaScreen>
+    with WidgetsBindingObserver {
+  final _service = ChatService();
+  late final String _uid;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _users;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
+  QuerySnapshot<Map<String, dynamic>>? _chats;
+  final _acknowledging = <String>{};
   String _search = '';
+  bool _chatError = false;
+  bool _receiptError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _uid = FirebaseAuth.instance.currentUser!.uid;
+    _users = FirebaseFirestore.instance.collection('usuarios').snapshots();
+    _subscription = _service
+        .obtenerChats(_uid)
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            setState(() {
+              _chats = snapshot;
+              _chatError = false;
+            });
+            _confirmReceived();
+          },
+          onError: (Object error) {
+            if (mounted) setState(() => _chatError = true);
+          },
+        );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _confirmReceived();
+  }
+
+  Future<void> _confirmReceived() async {
+    if (_chats == null ||
+        _chats!.metadata.isFromCache ||
+        (WidgetsBinding.instance.lifecycleState != null &&
+            WidgetsBinding.instance.lifecycleState !=
+                AppLifecycleState.resumed)) {
+      return;
+    }
+    for (final doc in _chats!.docs) {
+      final data = doc.data();
+      final time = data['ultimaActualizacion'] as Timestamp?;
+      final previous =
+          (data['recibidoHasta'] as Map<String, dynamic>?)?[_uid] as Timestamp?;
+      if (doc.metadata.hasPendingWrites ||
+          time == null ||
+          data['ultimoEmisorUid'] == _uid ||
+          (previous != null && previous.compareTo(time) >= 0) ||
+          !_acknowledging.add(doc.id)) {
+        continue;
+      }
+      try {
+        await _service.confirmar(chatId: doc.id, uid: _uid, hasta: time);
+      } catch (_) {
+        if (mounted) setState(() => _receiptError = true);
+      } finally {
+        _acknowledging.remove(doc.id);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  String _time(Timestamp? value) {
+    if (value == null) return '';
+    final date = value.toDate();
+    final now = DateTime.now();
+    if (DateUtils.isSameDay(date, now)) return DateFormat('HH:mm').format(date);
+    if (DateUtils.isSameDay(date, now.subtract(const Duration(days: 1)))) {
+      return 'Ayer';
+    }
+    return DateFormat('dd/MM').format(date);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final miUid = FirebaseAuth.instance.currentUser!.uid;
+    final chats = {
+      for (final doc
+          in _chats?.docs ?? <QueryDocumentSnapshot<Map<String, dynamic>>>[])
+        doc.id: doc,
+    };
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 76,
@@ -50,49 +144,33 @@ class _AgendaScreenState extends State<AgendaScreen> {
               onChanged: (value) =>
                   setState(() => _search = value.trim().toLowerCase()),
               decoration: const InputDecoration(
-                hintText: 'Buscar un contacto',
+                hintText: 'Buscar una conversación',
                 prefixIcon: Icon(Icons.search_rounded, color: AppTheme.muted),
               ),
             ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              children: [
-                Text(
-                  'Conversaciones',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF422536),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    'Contactos',
-                    style: TextStyle(
-                      color: AppTheme.pink,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
+            child: Text(
+              'Conversaciones',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
+          if (_chatError || _receiptError)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 12, 24, 0),
+              child: Text(
+                'No se pudieron sincronizar las conversaciones o sus estados. Intenta abrir la app de nuevo.',
+                style: TextStyle(color: AppTheme.pink),
+              ),
+            ),
           const SizedBox(height: 18),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('usuarios')
-                  .snapshots(),
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: _users,
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+                if (!snapshot.hasData &&
+                    snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
@@ -100,44 +178,71 @@ class _AgendaScreenState extends State<AgendaScreen> {
                     child: Text('No se pudieron cargar los contactos.'),
                   );
                 }
-                final contactos = (snapshot.data?.docs ?? []).where((doc) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  return doc.id != miUid &&
-                      '${data['nombre']} ${data['correo']}'
-                          .toLowerCase()
-                          .contains(_search);
-                }).toList();
-                if (contactos.isEmpty) {
+                final contacts = (snapshot.data?.docs ?? [])
+                    .where(
+                      (doc) =>
+                          doc.id != _uid &&
+                          '${doc.data()['nombre']} ${doc.data()['correo']}'
+                              .toLowerCase()
+                              .contains(_search),
+                    )
+                    .toList();
+                contacts.sort((a, b) {
+                  final aId = _service.generarChatId(
+                    _uid,
+                    a.data()['uid'] as String? ?? a.id,
+                  );
+                  final bId = _service.generarChatId(
+                    _uid,
+                    b.data()['uid'] as String? ?? b.id,
+                  );
+                  final aTime =
+                      chats[aId]?.data()['ultimaActualizacion'] as Timestamp?;
+                  final bTime =
+                      chats[bId]?.data()['ultimaActualizacion'] as Timestamp?;
+                  final order =
+                      (bTime?.compareTo(aTime ?? Timestamp(0, 0))) ??
+                      (aTime == null ? 0 : -1);
+                  return order != 0
+                      ? order
+                      : '${a.data()['nombre']}'.compareTo(
+                          '${b.data()['nombre']}',
+                        );
+                });
+                if (contacts.isEmpty) {
                   return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.forum_outlined,
-                          size: 48,
-                          color: AppTheme.pink,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _search.isEmpty
-                              ? 'Tu próxima conversación empieza aquí'
-                              : 'No se encontraron contactos',
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+                    child: Text(
+                      _search.isEmpty
+                          ? 'Tu próxima conversación empieza aquí'
+                          : 'No se encontraron contactos',
                     ),
                   );
                 }
                 return ListView.separated(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                  itemCount: contactos.length,
+                  itemCount: contacts.length,
                   separatorBuilder: (_, index) => const Padding(
                     padding: EdgeInsets.only(left: 84, right: 12),
                     child: Divider(),
                   ),
                   itemBuilder: (context, i) {
-                    final datos = contactos[i].data() as Map<String, dynamic>;
-                    final nombre = (datos['nombre'] as String?) ?? 'Contacto';
+                    final data = contacts[i].data();
+                    final name = data['nombre'] as String? ?? 'Contacto';
+                    final contactUid = data['uid'] as String? ?? contacts[i].id;
+                    final chatDoc =
+                        chats[_service.generarChatId(_uid, contactUid)];
+                    final chat = chatDoc?.data() ?? <String, dynamic>{};
+                    final time = chat['ultimaActualizacion'] as Timestamp?;
+                    final lastMessage = chat['ultimoMensaje'] as String?;
+                    final own = chat['ultimoEmisorUid'] == _uid;
+                    final read =
+                        (chat['leidoHasta'] as Map<String, dynamic>?)?[_uid]
+                            as Timestamp?;
+                    final unread =
+                        lastMessage != null &&
+                        !own &&
+                        time != null &&
+                        (read == null || read.compareTo(time) < 0);
                     return ListTile(
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -146,59 +251,85 @@ class _AgendaScreenState extends State<AgendaScreen> {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(18),
                       ),
-                      leading: Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: LinearGradient(
-                            colors: i.isEven
-                                ? [
-                                    const Color(0xFF63394F),
-                                    const Color(0xFF342632),
-                                  ]
-                                : [
-                                    const Color(0xFF46405F),
-                                    const Color(0xFF282635),
-                                  ],
-                          ),
-                        ),
-                        alignment: Alignment.center,
+                      leading: CircleAvatar(
+                        radius: 28,
+                        backgroundColor: const Color(0xFF422536),
                         child: Text(
-                          nombre.isEmpty
+                          name.isEmpty
                               ? '?'
-                              : nombre.characters.first.toUpperCase(),
+                              : name.characters.first.toUpperCase(),
                           style: const TextStyle(
                             fontSize: 23,
-                            fontWeight: FontWeight.w600,
                             color: Color(0xFFFFC8DF),
                           ),
                         ),
                       ),
                       title: Text(
-                        nombre,
+                        name,
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 5),
-                        child: Text(
-                          datos['correo'] as String? ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          children: [
+                            if (own) ...[
+                              MessageReceipt(
+                                status: messageStatus(
+                                  sentAt: time,
+                                  recipientUid: contactUid,
+                                  chat: chat,
+                                  pending:
+                                      chatDoc?.metadata.hasPendingWrites ??
+                                      false,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Expanded(
+                              child: Text(
+                                lastMessage ?? 'Envía un mensaje para iniciar la conversación',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: unread ? AppTheme.ink : AppTheme.muted,
+                                  fontWeight: unread
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      trailing: const Icon(
-                        Icons.chat_bubble_outline_rounded,
-                        size: 20,
-                        color: AppTheme.muted,
+                      trailing: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            _time(time),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: unread ? AppTheme.pink : AppTheme.muted,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          if (unread)
+                            const Tooltip(
+                              message: 'Mensajes sin leer',
+                              child: Icon(
+                                Icons.circle,
+                                size: 10,
+                                color: AppTheme.pink,
+                              ),
+                            ),
+                        ],
                       ),
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => ChatScreen(
-                            contactoUid:
-                                datos['uid'] as String? ?? contactos[i].id,
-                            contactoNombre: nombre,
+                            contactoUid: contactUid,
+                            contactoNombre: name,
                           ),
                         ),
                       ),
