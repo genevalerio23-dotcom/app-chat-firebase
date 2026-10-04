@@ -53,14 +53,20 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) => SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                minHeight: constraints.maxHeight - 64,
+                minHeight: (constraints.maxHeight - 64).clamp(
+                  0.0,
+                  double.infinity,
+                ),
               ),
               child: Center(
                 child: ConstrainedBox(
@@ -69,31 +75,33 @@ class _LoginScreenState extends State<LoginScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(30),
-                        child: Image.asset(
-                          'assets/icon/app_icon.png',
-                          width: 104,
-                          height: 104,
+                      if (!keyboardOpen) ...[
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(30),
+                          child: Image.asset(
+                            'assets/icon/app_icon.png',
+                            width: 104,
+                            height: 104,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 28),
-                      Text(
-                        _modoRegistro
-                            ? 'Tu nueva\nconexión.'
-                            : 'Qué bueno\nverte de nuevo.',
-                        style: theme.textTheme.headlineLarge,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _modoRegistro
-                            ? 'Crea tu cuenta y empieza a conversar.'
-                            : 'Inicia sesión para conectar con tus contactos.',
-                        style: theme.textTheme.bodyLarge?.copyWith(
-                          color: const Color(0xFF99939F),
+                        const SizedBox(height: 28),
+                        Text(
+                          _modoRegistro
+                              ? 'Tu nueva\nconexión.'
+                              : 'Qué bueno\nverte de nuevo.',
+                          style: theme.textTheme.headlineLarge,
                         ),
-                      ),
-                      const SizedBox(height: 32),
+                        const SizedBox(height: 12),
+                        Text(
+                          _modoRegistro
+                              ? 'Crea tu cuenta y empieza a conversar.'
+                              : 'Inicia sesión para conectar con tus contactos.',
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            color: const Color(0xFF99939F),
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                      ],
                       Container(
                         padding: const EdgeInsets.all(24),
                         decoration: BoxDecoration(
@@ -112,6 +120,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             if (_modoRegistro) ...[
                               TextField(
                                 controller: _nombreCtrl,
+                                scrollPadding: const EdgeInsets.only(
+                                  bottom: 96,
+                                ),
+                                textInputAction: TextInputAction.next,
                                 decoration: const InputDecoration(
                                   labelText: 'Nombre completo',
                                   prefixIcon: Icon(
@@ -123,6 +135,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             ],
                             TextField(
                               controller: _correoCtrl,
+                              scrollPadding: const EdgeInsets.only(bottom: 96),
+                              textInputAction: TextInputAction.next,
                               decoration: const InputDecoration(
                                 labelText: 'Correo',
                                 prefixIcon: Icon(Icons.mail_outline_rounded),
@@ -132,6 +146,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             const SizedBox(height: 16),
                             TextField(
                               controller: _claveCtrl,
+                              scrollPadding: const EdgeInsets.only(bottom: 96),
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) {
+                                if (!_cargando) _enviar();
+                              },
                               decoration: const InputDecoration(
                                 labelText: 'Contraseña',
                                 prefixIcon: Icon(Icons.lock_outline_rounded),
