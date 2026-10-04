@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "824612013655",
+    "project_id": "app-tareas-geness",
+    "storage_bucket": "app-tareas-geness.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:824612013655:android:7a568a43d8cdaa82db0512",
+        "android_client_info": {
+          "package_name": "com.example.app_chat_firebase"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJg7ttKCUyHEDK-yuLOUjn1FXh6ijh-Zg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:824612013655:android:0df6781de6007547db0512",
+        "android_client_info": {
+          "package_name": "com.example.app_tareas_firebase"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJg7ttKCUyHEDK-yuLOUjn1FXh6ijh-Zg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
